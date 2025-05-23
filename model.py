@@ -64,13 +64,18 @@ class Network(nn.Module):
         )
 
     def forward(self, state: AgentState):
-
+        
+        # 归一化 0～1
+        # 提取观察特征
         latent = self.feature(state.obs / 255)
 
+        # 当前观察的特征、上一个动作和上一个奖励拼接
         recurrent_input = torch.cat((latent, state.last_action, state.last_reward), dim=1)
 
+        # 将拼接后的状态和隐藏状态输入到LSTM中
         _, recurrent_output = self.recurrent(recurrent_input, state.hidden_state)
 
+        # 这里获取的是隐藏层的状态
         hidden = recurrent_output[0]
 
         adv = self.advantage(hidden)

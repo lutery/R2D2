@@ -553,7 +553,7 @@ class Actor:
         while True:
 
             done = False # 是否结束
-            agent_state = self.reset() # 重置环境
+            agent_state = self.reset() # 重置环境，这里返回的是AgentState
             episode_steps = 0 # 生命周期内执行的步数
 
             # 如果游戏没有结束或者没有达到最大步数则继续执行
