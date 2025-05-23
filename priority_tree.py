@@ -1,6 +1,7 @@
 from typing import Tuple
 import numpy as np
 
+# todo 后续增加注释
 class PriorityTree:
     def __init__(self, capacity, prio_exponent, is_exponent):
         self.num_layers = 1

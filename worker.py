@@ -70,6 +70,7 @@ class ReplayBuffer:
 
         self.buffer = [None] * self.num_blocks
 
+        # todo 这三个队列是什么意思？
         self.sample_queue_list, self.batch_queue, self.priority_queue = sample_queue_list, batch_queue, priority_queue
 
     def __len__(self):
@@ -277,32 +278,35 @@ def calculate_mixed_td_errors(td_error, learning_steps):
     return mixed_td_errors
 
 class Learner:
+    '''
+    这个应该是一个学习器，模型训练的地方
+    '''
     def __init__(self, batch_queue, priority_queue, model, grad_norm: int = config.grad_norm,
                 lr: float = config.lr, eps:float = config.eps, game_name: str = config.game_name,
                 target_net_update_interval: int = config.target_net_update_interval, save_interval: int = config.save_interval):
 
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.online_net = deepcopy(model)
+        self.online_net = deepcopy(model) # 模型的拷贝
         self.online_net.to(self.device)
         self.online_net.train()
-        self.target_net = deepcopy(self.online_net)
+        self.target_net = deepcopy(self.online_net) # 模型的拷贝 目标模型
         self.target_net.eval()
-        self.optimizer = torch.optim.Adam(self.online_net.parameters(), lr=lr, eps=eps)
+        self.optimizer = torch.optim.Adam(self.online_net.parameters(), lr=lr, eps=eps) # 只针对online_net进行优化
         self.loss_fn = nn.MSELoss(reduction='none')
-        self.grad_norm = grad_norm
-        self.batch_queue = batch_queue
-        self.priority_queue = priority_queue
+        self.grad_norm = grad_norm # 梯度裁剪的阈值
+        self.batch_queue = batch_queue # todo
+        self.priority_queue = priority_queue # todo
         self.num_updates = 0
         self.done = False
 
-        self.target_net_update_interval = target_net_update_interval
-        self.save_interval = save_interval
+        self.target_net_update_interval = target_net_update_interval # 目标模型的同步频率
+        self.save_interval = save_interval # 模型的保存频率
 
-        self.batched_data = []
+        self.batched_data = [] # todo
 
-        self.shared_model = model
+        self.shared_model = model # todo 共享模型，用于更新不同线程之间的权重吗？
 
-        self.game_name = game_name
+        self.game_name = game_name # todo
 
     def store_weights(self):
         self.shared_model.load_state_dict(self.online_net.state_dict())
@@ -394,10 +398,14 @@ class Learner:
 ############################## Actor ##############################
 
 class LocalBuffer:
-    '''store transitions of one episode'''
+    '''store transitions of one episode 这个应该是一个局部缓冲区，存储一个episode的所有数据'''
     def __init__(self, action_dim: int, forward_steps: int = config.forward_steps,
                 burn_in_steps = config.burn_in_steps, learning_steps: int = config.learning_steps, 
                 gamma: float = config.gamma, hidden_dim: int = config.hidden_dim, block_length: int = config.block_length):
+        '''
+        action_dim: 动作的维度
+        hidden_dim: 隐藏层的维度 todo 作用
+        '''
         
         self.action_dim = action_dim
         self.gamma = gamma
@@ -412,9 +420,19 @@ class LocalBuffer:
         return self.size
     
     def reset(self, init_obs: np.ndarray):
+        '''
+        这个函数的作用 初始化buffer缓冲区
+        1. 在动作器每个环境重置时都会调用一次
+
+        init_obs: 初始的观察值
+        '''
         self.obs_buffer = [init_obs]
+        # np.array([1 if i == 0 else 0 for i in range(self.action_dim) 这里实际时创建一个one-hot向量，这个one-hot变量只的是动作的向量，指向的是none动作
+        # 这里指的是初始初始状态时，上一个执行的动作是none
         self.last_action_buffer = [np.array([1 if i == 0 else 0 for i in range(self.action_dim)], dtype=bool)]
+        # 这里指的是初始状态时，上一个执行的奖励是0
         self.last_reward_buffer = [0]
+        # 隐藏状态的初始值是0
         self.hidden_buffer = [np.zeros((2, self.hidden_dim), dtype=np.float32)]
         self.action_buffer = []
         self.reward_buffer = []
@@ -499,13 +517,27 @@ class LocalBuffer:
 
 
 class Actor:
+    '''
+    游戏环境的采集器
+    '''
     def __init__(self, epsilon: float, model, sample_queue, obs_shape: np.ndarray = config.obs_shape,
                 max_episode_steps: int = config.max_episode_steps, block_length: int = config.block_length):
+        '''
+        epsilon: epsilon-greedy策略的epsilon值
+        model: 共享模型
+        sample_queue: 采集器采集到的数据存放的队列
+        obs_shape: 观察值的形状
+        max_episode_steps: 每个episode的最大步数
+        block_length: 每个block的长度 todo 作用
+        '''
 
+        # 创建游戏环境
         self.env = create_env(noop_start=True)
         self.action_dim = self.env.action_space.n
+        # 这里应该是创建当前动作器的模型，并设置为评估模式
         self.model = Network(self.env.action_space.n)
         self.model.eval()
+        # todo
         self.local_buffer = LocalBuffer(self.action_dim)
 
         self.epsilon = epsilon
@@ -520,15 +552,18 @@ class Actor:
 
         while True:
 
-            done = False
-            agent_state = self.reset()
-            episode_steps = 0
+            done = False # 是否结束
+            agent_state = self.reset() # 重置环境
+            episode_steps = 0 # 生命周期内执行的步数
 
+            # 如果游戏没有结束或者没有达到最大步数则继续执行
             while not done and episode_steps < self.max_episode_steps:
                 
+                # 利用模型预测动作的Q值和隐藏状态
                 with torch.no_grad():
                     q_value, hidden = self.model(agent_state)
-
+                
+                # epsilon-greedy策略选择动作
                 if random.random() < self.epsilon:
                     action = self.env.action_space.sample()
                 else:
@@ -567,9 +602,12 @@ class Actor:
         self.model.load_state_dict(self.shared_model.state_dict())
     
     def reset(self):
+        # 重置环境
         obs = self.env.reset()
+        # 重置局部缓冲区，一个生命 周期的动作缓冲区
         self.local_buffer.reset(obs)
 
+        # 待力气状态，包含了观察值，动作维度
         state = AgentState(torch.from_numpy(obs).unsqueeze(0), self.action_dim)
 
         return state

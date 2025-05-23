@@ -64,6 +64,16 @@ class WarpFrame(gym.ObservationWrapper):
 
 
 def create_env(env_name=config.game_name, noop_start=True):
+    '''
+    创建一个gym环境
+
+    灰度化处理
+    跳帧4帧
+    重复动作概率为0
+    不使用全动作空间
+    缩放到84x84
+    随机起始步数
+    '''
 
     env = gym.make(f'ALE/{env_name}-v5', obs_type='grayscale', frameskip=4, repeat_action_probability=0, full_action_space=False)
 

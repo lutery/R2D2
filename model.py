@@ -6,6 +6,7 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import config
 
+# 代理器状态，包含了观测值、动作维度、上一个动作、上一个奖励和隐藏状态
 @dataclass
 class AgentState:
     obs: torch.Tensor
