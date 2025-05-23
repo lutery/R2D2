@@ -13,15 +13,15 @@ prio_exponent = 0.9
 importance_sampling_exponent = 0.6
 
 training_steps = 100000
-buffer_capacity = 2000000
+buffer_capacity = 2000000 # 缓冲区的大小
 max_episode_steps = 27000
 actor_update_interval = 400
 block_length = 400  # cut one episode to numbers of blocks to improve the buffer space utilization
 
-num_actors = 8
+num_actors = 8 # 动作空间的大小，即有多少个动作
 base_eps = 0.4
 alpha = 7
-log_interval = 10
+log_interval = 10 # 这个应该时记录的日志周期
 
 # sequence setting
 burn_in_steps = 40

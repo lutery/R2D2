@@ -40,15 +40,16 @@ class ReplayBuffer:
                 alpha=config.prio_exponent, beta=config.importance_sampling_exponent,
                 batch_size=config.batch_size):
 
-        self.buffer_capacity = buffer_capacity
-        self.sequence_len = config.learning_steps
-        self.num_sequences = buffer_capacity//self.sequence_len
-        self.block_len = config.block_length
-        self.num_blocks = self.buffer_capacity // self.block_len
-        self.seq_pre_block = self.block_len // self.sequence_len
+        self.buffer_capacity = buffer_capacity # 缓冲区的大小
+        self.sequence_len = config.learning_steps # todo
+        self.num_sequences = buffer_capacity//self.sequence_len # todo
+        self.block_len = config.block_length # todo
+        self.num_blocks = self.buffer_capacity // self.block_len # todo
+        self.seq_pre_block = self.block_len // self.sequence_len # todo
 
-        self.block_ptr = 0
+        self.block_ptr = 0 # todo
 
+        # todo 感觉应该是实现了一个优先级缓冲区
         self.priority_tree = PriorityTree(self.num_sequences, alpha, beta)
 
         self.batch_size = batch_size

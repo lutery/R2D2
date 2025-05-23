@@ -21,6 +21,7 @@ def train(num_actors=config.num_actors, log_interval=config.log_interval):
 
     model = Network(create_env().action_space.n)
     model.share_memory()
+    # 看起来要搞多进程训练
     sample_queue_list = [mp.Queue() for _ in range(num_actors)]
     batch_queue = mp.Queue(8)
     priority_queue = mp.Queue(8)
