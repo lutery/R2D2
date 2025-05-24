@@ -268,6 +268,7 @@ class ReplayBuffer:
 ############################## Learner ##############################
 
 def calculate_mixed_td_errors(td_error, learning_steps):
+    # todo 调试看看如何计算的'''
     
     start_idx = 0
     mixed_td_errors = np.empty(learning_steps.shape, dtype=td_error.dtype)
@@ -410,7 +411,7 @@ class LocalBuffer:
         self.action_dim = action_dim
         self.gamma = gamma
         self.hidden_dim = hidden_dim
-        self.forward_steps = forward_steps
+        self.forward_steps = forward_steps # n步dqn计算时的前向步数
         self.learning_steps = learning_steps
         self.burn_in_steps = burn_in_steps
         self.block_length = block_length
@@ -426,23 +427,30 @@ class LocalBuffer:
 
         init_obs: 初始的观察值
         '''
-        self.obs_buffer = [init_obs]
+        self.obs_buffer = [init_obs] # 这里的obs_buffer 对应着相同位置的action表示的是到达该obs所执行的动作
         # np.array([1 if i == 0 else 0 for i in range(self.action_dim) 这里实际时创建一个one-hot向量，这个one-hot变量只的是动作的向量，指向的是none动作
-        # 这里指的是初始初始状态时，上一个执行的动作是none
+        # 这里指的是初始初始状态时，上一个执行的动作是none，存储的是动作的one-hont编码
         self.last_action_buffer = [np.array([1 if i == 0 else 0 for i in range(self.action_dim)], dtype=bool)]
         # 这里指的是初始状态时，上一个执行的奖励是0
         self.last_reward_buffer = [0]
         # 隐藏状态的初始值是0
         self.hidden_buffer = [np.zeros((2, self.hidden_dim), dtype=np.float32)]
-        self.action_buffer = []
-        self.reward_buffer = []
-        self.qval_buffer = []
-        self.curr_burn_in_steps = 0
-        self.size = 0
-        self.sum_reward = 0
+        self.action_buffer = [] # 存储动作的标量值，每次游戏结束时都会清空缓冲区
+        self.reward_buffer = [] # 存储的也是环境的奖励 ，每次游戏结束时都会清空缓冲区
+        self.qval_buffer = [] # 存储的是动作的q值，每次游戏结束时都会清空缓冲区
+        self.curr_burn_in_steps = 0 # todo
+        self.size = 0 # 缓冲区的大小
+        self.sum_reward = 0 # 存储的是应该是一个生命周期内获取的总奖励 todo
         self.done = False
 
     def add(self, action: int, reward: float, next_obs: np.ndarray, q_value: np.ndarray, hidden_state: np.ndarray):
+        '''
+        action: 执行的动作
+        reward: 得到的奖励
+        next_obs: 得到的状态
+        q_value: 得到的Q值
+        hidden_state: 模型隐藏层的状态
+        '''
         self.action_buffer.append(action)
         self.reward_buffer.append(reward)
         self.hidden_buffer.append(hidden_state)
@@ -454,54 +462,116 @@ class LocalBuffer:
         self.size += 1
     
     def finish(self, last_qval: np.ndarray = None) -> Tuple:
+        '''
+        last_qval: 在游戏结束时会调用这个方法，并且这里值为None/当达到最大步数时，会调用这个方法，并且这里值为为下一个Q值
+        '''
         assert self.size <= self.block_length
         # assert len(self.last_action_buffer) == self.curr_burn_in_steps + self.size + 1
 
+        # 这行代码在计算需要多少个序列(sequences)来存储当前缓冲区的所有数据:
+        # todo 估计就是训练时时一个连续序列一个序列取训练的 todo
         num_sequences = math.ceil(self.size/self.learning_steps)
 
+        # 最大的前进步数，这里应该就是限制最大的训练步数 todo 作用
         max_forward_steps = min(self.size, self.forward_steps)
+        # 感觉有点像n步DQN的计算变量 todo
         n_step_gamma = [self.gamma**self.forward_steps] * (self.size-max_forward_steps)
 
         # last_qval is none means episode done 
         if last_qval is not None:
+            # todo 这里是干嘛
             self.qval_buffer.append(last_qval)
             n_step_gamma.extend([self.gamma**i for i in reversed(range(1, max_forward_steps+1))])
         else:
-            self.done = True
-            self.qval_buffer.append(np.zeros_like(self.qval_buffer[0]))
+            self.done = True # 游戏结束标识
+            self.qval_buffer.append(np.zeros_like(self.qval_buffer[0])) # 如果游戏结束了，那么最新的Q值则是0
+            # todo
             n_step_gamma.extend([0 for _ in range(max_forward_steps)]) # set gamma to 0 so don't need 'done'
-
+        
+        # 将N步DQN的gamma转换为矩阵，方便计算
         n_step_gamma = np.array(n_step_gamma, dtype=np.float32)
 
-        obs = np.stack(self.obs_buffer)
-        last_action = np.stack(self.last_action_buffer)
-        last_reward = np.array(self.last_reward_buffer, dtype=np.float32)
+        obs = np.stack(self.obs_buffer) # 将所有的观察值堆叠成一个数组
+        last_action = np.stack(self.last_action_buffer) # 将所有的上一个动作堆叠成一个数组
+        last_reward = np.array(self.last_reward_buffer, dtype=np.float32) # 将所有的上一个奖励堆叠成一个数组
+        
+        '''
+        slice(start, stop, step) 是Python的切片操作，有三个参数：
 
+        start: 起始索引
+        stop: 结束索引（不包含）
+        step: 步长
+
+        这等价于更常见的切片语法：self.hidden_buffer[0:self.size:self.learning_steps]
+
+        所以以下操作是按照固定的步长为每一个训练的序列提取起始的隐藏层状态用于训练
+        '''
         hiddens = np.stack(self.hidden_buffer[slice(0, self.size, self.learning_steps)])
 
         actions = np.array(self.action_buffer, dtype=np.uint8)
 
         qval_buffer = np.concatenate(self.qval_buffer)
+        # 这里的作用应该是填充奖励的长度，可能是为了对齐某种长度
         reward_buffer = self.reward_buffer + [0 for _ in range(self.forward_steps-1)]
+        # 这里是计算n步dqn时，每一个时刻的前向forward_steps所累积的奖励
+        '''
+        # 衰减因子序列为：
+        [0.9^2, 0.9^1, 0.9^0] = [0.81, 0.9, 1.0]
+
+        # 如果 reward_buffer = [1, 2, 3, 4, 0, 0]
+        # 卷积计算 n 步累积奖励：
+        # 1*0.81 + 2*0.9 + 3*1.0 = 4.71
+        # 2*0.81 + 3*0.9 + 4*1.0 = 7.02
+        # 3*0.81 + 4*0.9 + 0*1.0 = 6.03
+        # 4*0.81 + 0*0.9 + 0*1.0 = 3.24
+        '''
         n_step_reward = np.convolve(reward_buffer, 
                                     [self.gamma**(self.forward_steps-1-i) for i in range(self.forward_steps)],
                                     'valid').astype(np.float32)
 
+        '''
+        curr_burn_in_steps 在 R2D2 算法中是用来跟踪当前的 burn-in 步数的变量。它的主要作用是：
+
+        维护 LSTM 状态的连续性
+        在序列之间保持 LSTM 隐藏状态的连续性
+        确保 LSTM 在训练时有正确的上下文信息
+
+        todo 怎么使用？
+        '''
         burn_in_steps = np.array([min(i*self.learning_steps+self.curr_burn_in_steps, self.burn_in_steps) for i in range(num_sequences)], dtype=np.uint8)
+        # 这里应该是存储实际用于训练的学习步数，如果对于结尾部分需要考虑到不是learning_steps倍数的情况，所以采用的是self.size-i*self.learning_steps
         learning_steps = np.array([min(self.learning_steps, self.size-i*self.learning_steps) for i in range(num_sequences)], dtype=np.uint8)
+        # 同样也是类似的道理，这里是n步dqn的向前看的步数，对于结尾部分 todo 调试看
         forward_steps = np.array([min(self.forward_steps, self.size+1-np.sum(learning_steps[:i+1])) for i in range(num_sequences)], dtype=np.uint8)
         assert forward_steps[-1] == 1 and burn_in_steps[0] == self.curr_burn_in_steps
         # assert last_action.shape[0] == self.curr_burn_in_steps + np.sum(learning_steps) + 1
 
+        # R2D2中TD误差和优先级计算的详细解析 todo 调试查看
+        # 从qval_buffer中提取未来状态的最大Q值,这里的未来状态应该是越过了训练步长的状态
         max_qval = np.max(qval_buffer[max_forward_steps:self.size+1], axis=1)
+        # 使用边缘填充('edge')来处理序列末尾的值
         max_qval = np.pad(max_qval, (0, max_forward_steps-1), 'edge')
+        # 选择实际上每一步执行动作的Q值
         target_qval = qval_buffer[np.arange(self.size), actions]
 
+        # 算n步TD误差的绝对值
+        # n_step_reward: n步累积奖励
+        # n_step_gamma * max_qval: 折扣后的未来最大Q值
+        # target_qval: 当前动作的Q值
+        # 这个误差用于优先级回放
+        # 误差雨大则说明预测的Q值和实际的Q值差距大，优先级回放会更倾向于选择这种误差大的样本进行训练
         td_errors = np.abs(n_step_reward + n_step_gamma * max_qval - target_qval, dtype=np.float32)
+        # 计算优先级:
+        # 创建优先级数组
+        # 使用混合TD误差计算优先级
+        # 混合TD误差结合了最大和平均TD误差
+        # 这些优先级用于优先级经验回放采样
         priorities = np.zeros(self.block_length//self.learning_steps, dtype=np.float32)
+        # 更新优先级
         priorities[:num_sequences] = calculate_mixed_td_errors(td_errors, learning_steps)
 
         # save burn in information for next block
+        # 看起来像保留一部分之前的数据，用于维护LSTM的上下文状态
         self.obs_buffer = self.obs_buffer[-self.burn_in_steps-1:]
         self.last_action_buffer = self.last_action_buffer[-self.burn_in_steps-1:]
         self.last_reward_buffer = self.last_reward_buffer[-self.burn_in_steps-1:]
@@ -512,6 +582,7 @@ class LocalBuffer:
         self.curr_burn_in_steps = len(self.obs_buffer)-1
         self.size = 0
         
+        # 将本次的数据打包成Block对象，一个block包含一个周期内所有的序列数据
         block = Block(obs, last_action, last_reward, actions, n_step_reward, n_step_gamma, hiddens, num_sequences, burn_in_steps, learning_steps, forward_steps)
         return [block, priorities, self.sum_reward if self.done else None]
 
@@ -542,13 +613,13 @@ class Actor:
 
         self.epsilon = epsilon
         self.shared_model = model
-        self.sample_queue = sample_queue
+        self.sample_queue = sample_queue # 存储着block，每个block包含一个周期内的所有序列数据
         self.max_episode_steps = max_episode_steps
         self.block_length = block_length
 
     def run(self):
         
-        actor_steps = 0
+        actor_steps = 0 # 采集器执行的步数，在整个采集器的生命周期内，会不断的增加下去
 
         while True:
 
@@ -572,18 +643,24 @@ class Actor:
                 # apply action in env
                 next_obs, reward, done, _ = self.env.step(action)
 
+                # 将最新的观察值，动作，奖励，隐藏状态更新到AgentState中（采用替换的形式）
+                # 而agent_state主要是给模型使用的
                 agent_state.update(next_obs, action, reward, hidden)
 
                 episode_steps += 1
                 actor_steps += 1
 
+                # 将动作记录到局部缓冲区
                 self.local_buffer.add(action, reward, next_obs, q_value.numpy(), torch.cat(hidden).numpy())
 
                 if done:
+                    # 如果游戏结束，则打包一个生命周期内的所有数据
                     block = self.local_buffer.finish()
                     self.sample_queue.put(block)
 
                 elif len(self.local_buffer) == self.block_length or episode_steps == self.max_episode_steps:
+                    # 如果局部缓冲区的长度达到了block_length或者生命周期内的步数达到了最大步数
+                    # 则中断采集，直接打包当前局部缓冲区的数据
                     with torch.no_grad():
                         q_value, hidden = self.model(agent_state)
 
