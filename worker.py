@@ -65,8 +65,8 @@ class ReplayBuffer:
 
         self.lock = threading.Lock()
 
-        self.size = 0
-        self.last_size = 0
+        self.size = 0 # 这个应该是最新的数据采集量
+        self.last_size = 0 # 这个应该是上一次的数据采集量
 
         self.buffer = [None] * self.num_blocks
 
@@ -77,6 +77,7 @@ class ReplayBuffer:
         return self.size
 
     def run(self):
+        # todo 这三个进程的作用分别是什么？
         background_thread = threading.Thread(target=self.add_data, daemon=True)
         background_thread.start()
 
@@ -88,6 +89,7 @@ class ReplayBuffer:
 
         log_interval = config.log_interval
 
+        # 这边看起来只是打印日志，真做事的还是上面三个线程
         while True:
             print(f'buffer size: {self.size}')
             print(f'buffer update speed: {(self.size-self.last_size)/log_interval}/s')
@@ -113,10 +115,12 @@ class ReplayBuffer:
                 time.sleep(log_interval)
 
     def prepare_data(self):
+        # 要等到缓冲区有足够的数据才能开始采样
         while self.size < config.learning_starts:
             time.sleep(1)
 
         while True:
+            # 知道缓冲区满了才开始采样数据
             if not self.batch_queue.full():
                 data = self.sample_batch()
                 self.batch_queue.put(data)
@@ -141,25 +145,35 @@ class ReplayBuffer:
 
 
     def add(self, block: Block, priority: np.array, episode_reward: float):
+        '''
+        block: 整个block的内容，包含了一个episode的所有数据
+        priority: 该block的优先级
+        episode_reward: 该episode的总奖励，如果是探索阶段则为0
+        '''
 
         with self.lock:
 
             idxes = np.arange(self.block_ptr*self.seq_pre_block, (self.block_ptr+1)*self.seq_pre_block, dtype=np.int64)
 
+            # 根据计算的优先级更新对应索引的优先级
+            # todo 后续看看这个优先级是怎么计算的
             self.priority_tree.update(idxes, priority)
 
             if self.buffer[self.block_ptr] is not None:
                 self.size -= np.sum(self.buffer[self.block_ptr].learning_steps).item()
 
             self.size += np.sum(block.learning_steps).item()
-
+            
+            # 将数据存储到缓冲区中
             self.buffer[self.block_ptr] = block
 
+            # todo
             self.env_steps += np.sum(block.learning_steps, dtype=np.int32)
 
+            # 更新缓冲区的指针，这里模拟的是一个循环缓冲区的效果
             self.block_ptr = (self.block_ptr+1) % self.num_blocks
             if episode_reward:
-                self.episode_reward += episode_reward
+                self.episode_reward += episode_reward # 这里应该是记录一个episode的总奖励，应该是用于计算平均奖励值
                 self.num_episodes += 1
 
     def sample_batch(self):
@@ -168,7 +182,7 @@ class ReplayBuffer:
         burn_in_steps, learning_steps, forward_steps = [], [], []
 
         with self.lock:
-
+            
             idxes, is_weights = self.priority_tree.sample(self.batch_size)
 
             block_idxes = idxes // self.seq_pre_block
@@ -667,10 +681,17 @@ class Actor:
                     block = self.local_buffer.finish(q_value.numpy())
 
                     if self.epsilon > 0.01:
+                        '''
+                        block[2]存储的是episode_reward
+                        在探索阶段(epsilon较大时)，将episode_reward设为None
+                        这是因为探索阶段的回报(reward)不能很好地反映策略的真实性能
+                        只有当epsilon很小时(< 0.01)，agent主要依据学到的策略行动，此时的回报才更有参考价值
+                        '''
                         block[2] = None
                     self.sample_queue.put(block)
 
                 if actor_steps % 400 == 0:
+                    # 每400步更新一次共享模型的权重
                     self.update_weights()
 
                 
