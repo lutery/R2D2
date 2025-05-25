@@ -22,16 +22,47 @@ import config
 
 @dataclass
 class Block:
+    # 存储观察值序列
+    # shape: (sequence_length, *obs_shape)
     obs: np.array
+
+    # 存储上一个时刻执行的动作的one-hot编码
+    # shape: (sequence_length, action_dim)
     last_action: np.array
+
+    # 存储上一个时刻获得的奖励
+    # shape: (sequence_length,)
     last_reward: np.array
+
+    # 存储当前时刻执行的动作的标量值
+    # shape: (sequence_length,)
     action: np.array
+
+    # 存储n步累积奖励(使用n-step TD)
+    # shape: (sequence_length,)
     n_step_reward: np.array
+
+    # 存储n步折扣因子
+    # shape: (sequence_length,)
     gamma: np.array
+
+    # 存储LSTM的隐藏状态
+    # shape: (num_sequences, 2, hidden_dim)
     hidden: np.array
+
+    # 当前block包含的序列数量
     num_sequences: int
+
+    # 每个序列的burn-in步数 todo
+    # shape: (num_sequences,)
     burn_in_steps: np.array
+
+    # 每个序列的实际学习步数 todo
+    # shape: (num_sequences,)
     learning_steps: np.array
+
+    # 每个序列的前向展望步数(用于n-step return) todo
+    # shape: (num_sequences,)
     forward_steps: np.array
 
 
@@ -43,9 +74,9 @@ class ReplayBuffer:
         self.buffer_capacity = buffer_capacity # 缓冲区的大小
         self.sequence_len = config.learning_steps # todo
         self.num_sequences = buffer_capacity//self.sequence_len # todo
-        self.block_len = config.block_length # todo
-        self.num_blocks = self.buffer_capacity // self.block_len # todo
-        self.seq_pre_block = self.block_len // self.sequence_len # todo
+        self.block_len = config.block_length # todo block的长度 block时做什么用的
+        self.num_blocks = self.buffer_capacity // self.block_len # todo 计算有多少个block
+        self.seq_pre_block = self.block_len // self.sequence_len # todo 每个block中包含的序列数
 
         self.block_ptr = 0 # todo
 
@@ -183,10 +214,11 @@ class ReplayBuffer:
 
         with self.lock:
             
+            # 这里的idxes应该是对应的序列索引
             idxes, is_weights = self.priority_tree.sample(self.batch_size)
 
-            block_idxes = idxes // self.seq_pre_block
-            sequence_idxes = idxes % self.seq_pre_block
+            block_idxes = idxes // self.seq_pre_block  # 确定在哪个block，表示每个索引在哪个block的索引
+            sequence_idxes = idxes % self.seq_pre_block  # 确定block中的哪个序列 标识每个索引在block中的序列索引
 
 
             for block_idx, sequence_idx  in zip(block_idxes, sequence_idxes):
@@ -257,6 +289,7 @@ class ReplayBuffer:
 
     def update_priorities(self, idxes: np.ndarray, td_errors: np.ndarray, old_ptr: int, loss: float):
         """Update priorities of sampled transitions"""
+        """更新优先级，应该是在训练的时候利用损失"""
         with self.lock:
 
             # discard the idxes that already been replaced by new data in replay buffer during training
