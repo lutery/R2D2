@@ -318,8 +318,10 @@ def calculate_mixed_td_errors(td_error, learning_steps):
     # todo 调试看看如何计算的'''
     
     start_idx = 0
+    # todo learning_steps是什么？内容是什么？
     mixed_td_errors = np.empty(learning_steps.shape, dtype=td_error.dtype)
     for i, steps in enumerate(learning_steps):
+        # 得到每个序列的TD误差，使用的方式是90%的最大TD误差和10%的平均TD误差的加权平均
         mixed_td_errors[i] = 0.9*td_error[start_idx:start_idx+steps].max() + 0.1*td_error[start_idx:start_idx+steps].mean()
         start_idx += steps
     
@@ -390,25 +392,36 @@ class Learner:
             batch_action = batch_action.long()
             burn_in_steps, learning_steps, forward_steps = burn_in_steps, learning_steps, forward_steps
 
+            # todo 为什么要这么处理batch_hidden
             batch_hidden = (batch_hidden[:1], batch_hidden[1:])
 
+            # 看来是这里将观察值归一化到0-1之间
             batch_obs = batch_obs / 255
 
             # double q learning
             with torch.no_grad():
+                # 用online计算最大q值的动作
                 batch_action_ = self.online_net.calculate_q_(batch_obs, batch_last_action, batch_last_reward, batch_hidden, burn_in_steps, learning_steps, forward_steps).argmax(1).unsqueeze(1)
+                # 用target_net计算对应的q值
                 batch_q_ = self.target_net.calculate_q_(batch_obs, batch_last_action, batch_last_reward, batch_hidden, burn_in_steps, learning_steps, forward_steps).gather(1, batch_action_).squeeze(1)
             
+            # batch_q_：应该是被缩放过了，所以需要逆缩放，计算bellman的q值
+            # 然后再用value_rescale将其缩放到合适的值范围，使得训练更加的稳定
             target_q = self.value_rescale(batch_n_step_reward + batch_n_step_gamma * self.inverse_value_rescale(batch_q_))
             # target_q = batch_n_step_reward + batch_n_step_gamma * batch_q_
 
+            # 在此使用online_net计算当前的q值，而调用的方法和原先的不同之处在于没有传forward_steps
+            # todo forward_steps是什么了？
             batch_q = self.online_net.calculate_q(batch_obs, batch_last_action, batch_last_reward, batch_hidden, burn_in_steps, learning_steps).gather(1, batch_action).squeeze(1)
             
+            # 计算损失函数，这里使用的是均方误差损失函数
+            # todo is_weights是用来做什么的？
             loss = (is_weights * self.loss_fn(batch_q, target_q)).mean()
 
-            
+            # 计算TD误差,使用的方式是得到target_q和batch_q的差值
             td_errors = (target_q-batch_q).detach().clone().squeeze().abs().cpu().float().numpy()
 
+            # 计算混合TD误差（相差的误差最大值和平均值的加权平均），这里应该是优化样本的权重
             priorities = calculate_mixed_td_errors(td_errors, learning_steps.numpy())
 
             # automatic mixed precision training
@@ -419,18 +432,23 @@ class Learner:
 
             self.num_updates += 1
 
+            # 更新优先级
+            # todo 这里的idxes是什么？
             self.priority_queue.put((idxes, priorities, old_ptr, loss.item()))
 
             # store new weights in shared memory
             if self.num_updates % 4 == 0:
+                # 同步共享模型的权重
                 self.store_weights()
 
             # update target net
             if self.num_updates % self.target_net_update_interval == 0:
+                # 同步目标网络的权重
                 self.target_net.load_state_dict(self.online_net.state_dict())
             
             # save model 
             if self.num_updates % self.save_interval == 0:
+                # 保存模型到指定的路径
                 torch.save((self.online_net.state_dict(), self.num_updates, env_steps, (time.time()-start_time)/60), os.path.join('models', '{}{}.pth'.format(self.game_name, self.num_updates)))
 
     @staticmethod
