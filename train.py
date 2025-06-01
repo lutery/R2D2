@@ -46,6 +46,8 @@ def train(num_actors=config.num_actors, log_interval=config.log_interval):
         proc.start()
 
     # 这个run函数是什么的？
+    # 子线程，用来处理采集器收集到的样本数据
+    # 并送入训练buffer中
     buffer_proc = mp.Process(target=buffer.run)
     buffer_proc.start()
 

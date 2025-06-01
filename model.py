@@ -103,6 +103,7 @@ class Network(nn.Module):
         obs = obs.reshape(-1, *self.obs_shape)
         last_action = last_action.view(-1, self.action_dim)
         last_reward = last_reward.view(-1, 1)
+        # 观察特征提取
         latent = self.feature(obs)
 
         seq_len = burn_in_steps + learning_steps + forward_steps
@@ -110,11 +111,31 @@ class Network(nn.Module):
         recurrent_input = torch.cat((latent, last_action, last_reward), dim=1)
         recurrent_input = recurrent_input.view(batch_size, max_seq_len, -1)
 
+        '''
+        # 1. 原始数据维度
+        latent: (batch_size * max_seq_len, 512)
+        last_action: (batch_size * max_seq_len, action_dim)
+        last_reward: (batch_size * max_seq_len, 1)
+
+        # 2. 拼接后的维度
+        recurrent_input: (batch_size * max_seq_len, 512+action_dim+1)
+
+        # 3. 重塑为序列形式
+        recurrent_input = recurrent_input.view(batch_size, max_seq_len, -1)
+        # 维度变为: (batch_size, max_seq_len, 512+action_dim+1)
+
+        # 4. 打包序列
+        recurrent_input = pack_padded_sequence(recurrent_input, seq_len, 
+                                            batch_first=True, 
+                                            enforce_sorted=False)
+        '''
+        # 这个函数用于处理变长序列，将填充的序列压缩成紧凑形式，去除冗余的填充部分
         recurrent_input = pack_padded_sequence(recurrent_input, seq_len, batch_first=True, enforce_sorted=False)
 
         self.recurrent.flatten_parameters()
         recurrent_output, _ = self.recurrent(recurrent_input, hidden_state)
 
+        # 将压缩的序列解压回原来的形状
         recurrent_output, _ = pad_packed_sequence(recurrent_output, batch_first=True)
 
         seq_start_idx = burn_in_steps + self.max_forward_steps
